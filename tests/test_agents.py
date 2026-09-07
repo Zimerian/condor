@@ -643,11 +643,13 @@ def test_consult_denies_server_without_access(monkeypatch):
 
     called = {"run": False}
 
-    async def _fail_run_consult(**kw):  # pragma: no cover - must not be reached
+    async def _fail_run_consult_with_usage(**kw):  # pragma: no cover - must not be reached
         called["run"] = True
-        return "should not run"
+        return consult_module.ConsultResult(answer="should not run", usage={})
 
-    monkeypatch.setattr(consult_module, "run_consult", _fail_run_consult)
+    monkeypatch.setattr(
+        consult_module, "run_consult_with_usage", _fail_run_consult_with_usage
+    )
     monkeypatch.setattr(
         config_manager,
         "get_config_manager",
@@ -673,11 +675,22 @@ def test_consult_forces_caller_user_id(monkeypatch):
 
     seen = {}
 
-    async def _capture_run_consult(**kw):
+    async def _capture_run_consult_with_usage(**kw):
         seen.update(kw)
-        return "ok"
+        return consult_module.ConsultResult(
+            answer="ok",
+            usage={
+                "prompt_tokens": 1200,
+                "completion_tokens": 180,
+                "total_tokens": 1380,
+                "cost_usd": "0.0032",
+            },
+            response_id="openrouter-response-7",
+        )
 
-    monkeypatch.setattr(consult_module, "run_consult", _capture_run_consult)
+    monkeypatch.setattr(
+        consult_module, "run_consult_with_usage", _capture_run_consult_with_usage
+    )
     monkeypatch.setattr(
         config_manager,
         "get_config_manager",
@@ -689,6 +702,13 @@ def test_consult_forces_caller_user_id(monkeypatch):
     result = asyncio.run(agents_module.consult_agent("em", req, user=_web_user(42)))
 
     assert result["answer"] == "ok"
+    assert result["usage"] == {
+        "prompt_tokens": 1200,
+        "completion_tokens": 180,
+        "total_tokens": 1380,
+        "cost_usd": "0.0032",
+    }
+    assert result["response_id"] == "openrouter-response-7"
     assert seen["user_id"] == 42  # caller's id, not the 999 override
     assert seen["server_name"] == "X"
 

@@ -19,6 +19,8 @@ from __future__ import annotations
 
 import logging
 import os
+from dataclasses import dataclass
+from typing import Any, Callable
 
 from condor.acp.pydantic_ai_client import (
     PydanticAIClient,
@@ -29,6 +31,15 @@ from condor.agents.agent import AgentStore
 from condor.preferences import resolve_custom_endpoint
 
 log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class ConsultResult:
+    """Answer plus optional secret-free provider usage metadata."""
+
+    answer: str
+    usage: dict[str, Any]
+    response_id: str | None = None
 
 
 def _build_consult_permission_cb(slug: str, user_id: int, chat_id: int):
@@ -86,6 +97,44 @@ async def run_consult(
     )
 
 
+async def run_consult_with_usage(
+    slug: str,
+    user_id: int,
+    chat_id: int,
+    server_name: str | None,
+    task: str,
+    context: str = "",
+) -> ConsultResult:
+    """Consult an Agent and return usage when the backend exposes it."""
+
+    permission_cb = _build_consult_permission_cb(slug, user_id, chat_id)
+    captured: dict[str, Any] = {}
+
+    def capture(client: Any) -> None:
+        usage = getattr(client, "last_usage", None)
+        if isinstance(usage, dict):
+            captured["usage"] = dict(usage)
+        response_id = getattr(client, "last_response_id", None)
+        if response_id:
+            captured["response_id"] = str(response_id)
+
+    answer = await _run_agent_to_completion(
+        slug=slug,
+        user_id=user_id,
+        chat_id=chat_id,
+        server_name=server_name,
+        task=task,
+        context=context,
+        permission_callback=permission_cb,
+        completion_sink=capture,
+    )
+    return ConsultResult(
+        answer=answer,
+        usage=captured.get("usage", {}),
+        response_id=captured.get("response_id"),
+    )
+
+
 async def _run_agent_to_completion(
     slug: str,
     user_id: int,
@@ -96,6 +145,7 @@ async def _run_agent_to_completion(
     permission_callback=None,
     event_sink=None,
     delegate_worker: bool = False,
+    completion_sink: Callable[[Any], None] | None = None,
 ) -> str:
     """Load the Agent ``slug``, run its brain to completion on ``task``, return text.
 
@@ -235,5 +285,8 @@ async def _run_agent_to_completion(
             answer = "".join(chunks)
     finally:
         await client.stop()
+
+    if completion_sink is not None:
+        completion_sink(client)
 
     return fallback_note + (answer or "(the agent returned no answer)")
