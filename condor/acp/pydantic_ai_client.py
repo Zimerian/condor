@@ -1067,7 +1067,8 @@ class PydanticAIClient:
     def _capture_run_telemetry(self, run: Any, messages: list[Any]) -> None:
         """Capture secret-free token/cost and provider response metadata."""
 
-        usage = getattr(run, "usage", None)
+        usage_value = getattr(run, "usage", None)
+        usage = usage_value() if callable(usage_value) else usage_value
         input_tokens = getattr(usage, "input_tokens", None)
         output_tokens = getattr(usage, "output_tokens", None)
         cost = getattr(usage, "cost", None)
