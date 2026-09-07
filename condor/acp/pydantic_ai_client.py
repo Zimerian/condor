@@ -496,6 +496,11 @@ class PydanticAIClient:
         # There is no protocol to notify here (the "agent" is a library call),
         # so cancelling the run *is* the cancel.
         self._abort_requested = False
+        # Usage/provider metadata for the most recently completed prompt. These
+        # are deliberately simple serializable values so API callers can expose
+        # them without leaking provider clients or credentials.
+        self.last_usage: dict[str, Any] = {}
+        self.last_response_id: str | None = None
 
     def _build_model(self) -> Any:
         """Build the pydantic-ai model object with sensible defaults.
@@ -1044,7 +1049,9 @@ class PydanticAIClient:
                     # skipping it is what makes the model answer the follow-up
                     # as though it had finished a turn the user never saw.
                     if run.result is not None:
-                        self._message_history.extend(run.result.new_messages())
+                        new_messages = run.result.new_messages()
+                        self._message_history.extend(new_messages)
+                        self._capture_run_telemetry(run, new_messages)
                     elif aborted:
                         self._message_history.extend(run.new_messages())
 
@@ -1056,6 +1063,43 @@ class PydanticAIClient:
                 log.exception("PydanticAI prompt error: %s", e)
                 yield TextChunk(text=self._format_error(e))
                 yield PromptDone(stop_reason="error")
+
+    def _capture_run_telemetry(self, run: Any, messages: list[Any]) -> None:
+        """Capture secret-free token/cost and provider response metadata."""
+
+        usage = getattr(run, "usage", None)
+        input_tokens = getattr(usage, "input_tokens", None)
+        output_tokens = getattr(usage, "output_tokens", None)
+        cost = getattr(usage, "cost", None)
+
+        normalized: dict[str, Any] = {}
+        if isinstance(input_tokens, int) and input_tokens >= 0:
+            normalized["prompt_tokens"] = input_tokens
+        if isinstance(output_tokens, int) and output_tokens >= 0:
+            normalized["completion_tokens"] = output_tokens
+        if (
+            isinstance(input_tokens, int)
+            and input_tokens >= 0
+            and isinstance(output_tokens, int)
+            and output_tokens >= 0
+        ):
+            normalized["total_tokens"] = input_tokens + output_tokens
+        if cost is not None:
+            try:
+                if cost >= 0:
+                    normalized["cost_usd"] = str(cost)
+            except TypeError:
+                pass
+
+        response_id = None
+        for message in reversed(messages):
+            candidate = getattr(message, "provider_response_id", None)
+            if candidate:
+                response_id = str(candidate)
+                break
+
+        self.last_usage = normalized
+        self.last_response_id = response_id
 
     def _format_error(self, e: Exception) -> str:
         """Translate provider HTTP errors into actionable user-facing text.
