@@ -1215,7 +1215,7 @@ async def consult_agent(
     slug: str, req: ConsultRequest, user: WebUser = Depends(get_current_user)
 ):
     """Run an Agent consult (its brain to completion) and return the answer."""
-    from condor.agents.consult import run_consult
+    from condor.agents.consult import run_consult_with_usage
     from config_manager import get_config_manager
 
     if not req.task:
@@ -1234,7 +1234,7 @@ async def consult_agent(
     # Web callers always act as themselves; the ``user_id`` override is reserved
     # for trusted internal/MCP callers and must not let a session impersonate
     # another user's memory/skill scope.
-    answer = await run_consult(
+    result = await run_consult_with_usage(
         slug=slug,
         user_id=user.id,
         chat_id=req.chat_id,
@@ -1242,7 +1242,12 @@ async def consult_agent(
         task=req.task,
         context=req.context,
     )
-    return {"agent": slug, "answer": answer}
+    return {
+        "agent": slug,
+        "answer": result.answer,
+        "usage": result.usage,
+        "response_id": result.response_id,
+    }
 
 
 # ── Delegate (fire-and-forget background tasks) ──
