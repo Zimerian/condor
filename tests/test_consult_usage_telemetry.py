@@ -37,3 +37,20 @@ def test_capture_run_telemetry_keeps_missing_usage_explicit() -> None:
 
     assert client.last_usage == {}
     assert client.last_response_id is None
+
+
+def test_capture_run_telemetry_supports_pydantic_ai_v1_78_usage_method() -> None:
+    client = PydanticAIClient("openrouter:openai/gpt-5-mini")
+    usage = SimpleNamespace(input_tokens=321, output_tokens=45, cost=0.0011)
+    run = SimpleNamespace(usage=lambda: usage)
+    messages = [SimpleNamespace(provider_response_id="openrouter-response-method")]
+
+    client._capture_run_telemetry(run, messages)
+
+    assert client.last_usage == {
+        "prompt_tokens": 321,
+        "completion_tokens": 45,
+        "total_tokens": 366,
+        "cost_usd": "0.0011",
+    }
+    assert client.last_response_id == "openrouter-response-method"
