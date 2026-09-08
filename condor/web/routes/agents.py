@@ -1210,6 +1210,29 @@ async def delete_agent(slug: str, user: WebUser = Depends(get_current_user)):
     return {"deleted": True}
 
 
+@router.get("/{slug}/provider-usage")
+async def get_agent_provider_usage(
+    slug: str, user: WebUser = Depends(get_current_user)
+):
+    """Read secret-free provider key usage for budget reconciliation."""
+
+    agent = _get_agent(slug)
+    if not agent.agent_key.startswith("openrouter:"):
+        raise HTTPException(status_code=409, detail="agent is not configured for OpenRouter")
+    api_key = os.environ.get("OPENROUTER_API_KEY", "")
+    from condor.openrouter_usage import OpenRouterUsageError, fetch_openrouter_key_usage
+
+    try:
+        usage = await fetch_openrouter_key_usage(api_key)
+    except OpenRouterUsageError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return {
+        "agent": slug,
+        "provider": "openrouter",
+        **usage,
+    }
+
+
 @router.post("/{slug}/consult")
 async def consult_agent(
     slug: str, req: ConsultRequest, user: WebUser = Depends(get_current_user)
