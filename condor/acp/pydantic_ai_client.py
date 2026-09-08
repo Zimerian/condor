@@ -551,13 +551,18 @@ class PydanticAIClient:
                 raise RuntimeError(
                     "OPENROUTER_API_KEY is not set. Add it to your .env to use openrouter:* models."
                 )
+            from pydantic_ai.models.openrouter import OpenRouterModel
+            from pydantic_ai.providers.openrouter import OpenRouterProvider
+
             openai_client = AsyncOpenAI(
                 base_url=base_url or DEFAULT_BASE_URLS["openrouter"],
                 api_key=api_key,
                 timeout=_local_timeout,
             )
-            return _make_openai_compat_model(
-                model_id, OpenAIProvider(openai_client=openai_client)
+            return OpenRouterModel(
+                model_id,
+                provider=OpenRouterProvider(openai_client=openai_client),
+                settings={"openrouter_usage": {"include": True}},
             )
 
         # Custom OpenAI-compatible provider (Venice AI, Together, any vLLM/TGI...):
@@ -1085,19 +1090,28 @@ class PydanticAIClient:
             and output_tokens >= 0
         ):
             normalized["total_tokens"] = input_tokens + output_tokens
-        if cost is not None:
-            try:
-                if cost >= 0:
-                    normalized["cost_usd"] = str(cost)
-            except TypeError:
-                pass
 
         response_id = None
+        provider_cost = None
         for message in reversed(messages):
-            candidate = getattr(message, "provider_response_id", None)
-            if candidate:
-                response_id = str(candidate)
+            if response_id is None:
+                candidate = getattr(message, "provider_response_id", None)
+                if candidate:
+                    response_id = str(candidate)
+            if provider_cost is None:
+                provider_details = getattr(message, "provider_details", None)
+                if isinstance(provider_details, dict):
+                    provider_cost = provider_details.get("cost")
+            if response_id is not None and provider_cost is not None:
                 break
+
+        effective_cost = cost if cost is not None else provider_cost
+        if effective_cost is not None:
+            try:
+                if effective_cost >= 0:
+                    normalized["cost_usd"] = str(effective_cost)
+            except TypeError:
+                pass
 
         self.last_usage = normalized
         self.last_response_id = response_id
